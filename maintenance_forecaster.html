@@ -18,12 +18,25 @@
         .tab-container button { background-color: #f1f1f1; border: 1px solid #ccc; outline: none; cursor: pointer; padding: 10px 15px; transition: 0.3s; }
         .tab-container button.active { background-color: #ccc; }
         .tab-content { display: none; padding: 10px; border: 1px solid #ccc; border-top: none; }
-        #ganttChart { width: 100%; }
+        #ganttChart { width: 100%; /* Let SVG size itself */ }
+        #gantt-wrapper { width: 100%; overflow-x: auto; margin-top: 10px; } /* Make wrapper scrollable */
         #taskTable input[type="number"] { width: 60px; } /* Adjust width for duration input */
         #taskTable input[type="checkbox"] { cursor: pointer; }
         .suppression-list { list-style: none; padding: 0; margin: 0; }
-        .suppression-list li { margin-bottom: 3px; }
         #dataInputArea { width: 98%; height: 150px; margin-top: 5px; font-family: monospace; } /* Style for textarea */
+
+        /* Gantt Bar Colors */
+        .gantt .bar-planned.task-color-0 .bar { fill: #a3a3ff; }
+        .gantt .bar-planned.task-color-1 .bar { fill: #8bc34a; }
+        .gantt .bar-planned.task-color-2 .bar { fill: #ff9800; }
+        .gantt .bar-planned.task-color-3 .bar { fill: #e91e63; }
+        .gantt .bar-planned.task-color-4 .bar { fill: #00bcd4; }
+        /* Add more colors if needed */
+
+        /* Hide default text inside bars if Frappe adds it */
+        .gantt .bar-label { display: none; }
+        .gantt .bar-label.big { display: none; }
+
 
         @media print {
             body * { visibility: hidden; }
@@ -111,17 +124,18 @@
     <div id="ganttTab" class="tab-content">
         <h2>Gantt Chart</h2>
         <div>
-            Time Scale:
-            <button id="ganttDayBtn">Day</button>
-            <button id="ganttWeekBtn">Week</button>
-            <button id="ganttMonthBtn">Month</button>
-            <button id="ganttYearBtn">Year</button>
-            &nbsp; | &nbsp; Pan:
-            <button id="ganttPanLeftBtn">&lt;&lt;</button>
-            <button id="ganttPanRightBtn">&gt;&gt;</button>
-            <!-- Zoom controls could be added here if needed -->
+            Controls:
+            <button id="ganttPanLeftBtn" title="Pan Left">&lt;&lt;</button>
+            <button id="ganttZoomOutBtn" title="Zoom Out">-</button>
+            <button id="ganttZoomInBtn" title="Zoom In">+</button>
+            <button id="ganttPanRightBtn" title="Pan Right">&gt;&gt;</button>
+            &nbsp; | &nbsp; Current View: <span id="ganttCurrentView">Week</span>
+            <!-- Original Time Scale buttons removed, zoom buttons control view -->
         </div>
-        <svg id="ganttChart"></svg> <!-- Container for Frappe Gantt -->
+        <!-- Add a wrapper div for scrolling -->
+        <div id="gantt-wrapper">
+             <svg id="ganttChart"></svg> <!-- Container for Frappe Gantt -->
+        </div>
     </div>
 
     <!-- Include Frappe Gantt JS -->
@@ -226,6 +240,8 @@
         let tasks = []; // Array to hold processed task objects
         let ganttChartInstance = null;
         let allSuppressions = []; // Store all potential suppressions { suppressedById, suppressesId, type: 'explicit'/'implicit', active: true }
+        const ganttViewModes = ['Day', 'Week', 'Month', 'Year']; // Define available modes
+        let currentGanttViewIndex = 1; // Start with 'Week'
 
         // --- DOM Elements ---
         const startDateInput = document.getElementById('startDate');
@@ -238,12 +254,14 @@
         const summaryTableBody = document.getElementById('summaryTable').querySelector('tbody');
         const printSummaryBtn = document.getElementById('printSummaryBtn');
         const ganttSvg = document.getElementById('ganttChart');
-        const ganttDayBtn = document.getElementById('ganttDayBtn');
-        const ganttWeekBtn = document.getElementById('ganttWeekBtn');
-        const ganttMonthBtn = document.getElementById('ganttMonthBtn');
-        const ganttYearBtn = document.getElementById('ganttYearBtn');
+        const ganttWrapper = document.getElementById('gantt-wrapper'); // Get the wrapper div
+        // Gantt control buttons updated
         const ganttPanLeftBtn = document.getElementById('ganttPanLeftBtn');
+        const ganttZoomOutBtn = document.getElementById('ganttZoomOutBtn');
+        const ganttZoomInBtn = document.getElementById('ganttZoomInBtn');
         const ganttPanRightBtn = document.getElementById('ganttPanRightBtn');
+        const ganttCurrentViewSpan = document.getElementById('ganttCurrentView'); // To display current view
+
 
         // --- Helper Functions ---
 
@@ -628,32 +646,38 @@
 
         function renderGanttChart(ganttTasks) {
              if (!ganttTasks || ganttTasks.length === 0) {
-                 ganttSvg.innerHTML = '<p>No tasks to display. Calculate the schedule first.</p>';
+                 // Clear wrapper content as well
+                 ganttWrapper.innerHTML = '<p>No tasks to display. Calculate the schedule first.</p>';
                  ganttChartInstance = null;
                  return;
              }
-             ganttSvg.innerHTML = ''; // Clear previous chart/message
+             // Ensure wrapper is ready for SVG injection
+             ganttWrapper.innerHTML = '<svg id="ganttChart"></svg>';
+             const ganttSvgElement = ganttWrapper.querySelector('#ganttChart'); // Re-select SVG inside wrapper
 
-            // Ensure tasks have valid start/end dates for Frappe Gantt
-            const validGanttTasks = ganttTasks.map(task => ({
+
+            // Ensure tasks have valid start/end dates and add custom class for color
+            const validGanttTasks = ganttTasks.map((task, index) => ({
                 id: `${task.id}-${task.start}`, // Unique ID for each instance
-                name: `${task.id}: ${task.name}`,
+                name: `${task.id}: ${task.name}`, // Name used in popup
                 start: task.start,
                 end: task.end,
                 progress: task.progress,
                 dependencies: '', // Add dependencies if needed later
-                custom_class: task.custom_class || ''
+                custom_class: `bar-planned task-color-${task.id % 5}` // Assign color class based on ID modulo 5
             })).filter(task => task.start && task.end && task.start <= task.end);
 
 
              if (validGanttTasks.length === 0) {
-                 ganttSvg.innerHTML = '<p>No valid tasks with start/end dates found for Gantt chart.</p>';
+                 // Update wrapper content
+                 ganttWrapper.innerHTML = '<p>No valid tasks with start/end dates found for Gantt chart.</p>';
                  ganttChartInstance = null;
                  return;
              }
 
             try {
-                 ganttChartInstance = new Gantt("#ganttChart", validGanttTasks, {
+                 // Target the SVG element *inside* the wrapper
+                 ganttChartInstance = new Gantt(ganttSvgElement, validGanttTasks, {
                      header_height: 50,
                      column_width: 30,
                      step: 24, // Hours
@@ -662,7 +686,7 @@
                      bar_corner_radius: 3,
                      arrow_curve: 5,
                      padding: 18,
-                     view_mode: 'Week', // Initial view
+                     view_mode: ganttViewModes[currentGanttViewIndex], // Use current view mode
                      date_format: 'YYYY-MM-DD',
                      language: 'en', // or 'es', 'it', 'ru', 'ptBr', 'fr', 'tr', 'zh', 'de', 'hu'
                      custom_popup_html: function(task) {
@@ -678,16 +702,21 @@
                      on_click: function (task) { console.log('Clicked:', task); },
                      on_date_change: function(task, start, end) { console.log('Date Changed:', task, start, end); },
                      on_progress_change: function(task, progress) { console.log('Progress Changed:', task, progress); },
-                     on_view_change: function(mode) { console.log('View Changed:', mode); }
+                     on_view_change: function(mode) {
+                         console.log('View Changed:', mode);
+                         currentGanttViewIndex = ganttViewModes.indexOf(mode);
+                         ganttCurrentViewSpan.textContent = mode; // Update displayed view mode
+                     }
                  });
-                 // Adjust height dynamically (simple example)
+                 // Adjust height dynamically (simple example) - Apply to SVG, wrapper handles overflow
                  const numTasks = new Set(validGanttTasks.map(t => t.name)).size; // Unique task names
                  const estimatedHeight = Math.max(200, numTasks * 40 + 100); // Base height + per task + header/padding
-                 ganttSvg.style.height = `${estimatedHeight}px`;
+                 ganttSvgElement.style.height = `${estimatedHeight}px`; // Set height on SVG
 
             } catch (e) {
                  console.error("Error creating Gantt chart:", e);
-                 ganttSvg.innerHTML = `<p style="color: red;">Error creating Gantt chart: ${e.message}</p>`;
+                 // Update wrapper content
+                 ganttWrapper.innerHTML = `<p style="color: red;">Error creating Gantt chart: ${e.message}</p>`;
                  ganttChartInstance = null;
             }
         }
@@ -769,18 +798,30 @@
         });
 
 
-        // Gantt Control Listeners
-        ganttDayBtn.addEventListener('click', () => ganttChartInstance?.change_view_mode('Day'));
-        ganttWeekBtn.addEventListener('click', () => ganttChartInstance?.change_view_mode('Week'));
-        ganttMonthBtn.addEventListener('click', () => ganttChartInstance?.change_view_mode('Month'));
-        ganttYearBtn.addEventListener('click', () => ganttChartInstance?.change_view_mode('Year'));
+        // Gantt Control Listeners - Updated
+        function changeGanttView(direction) {
+            if (!ganttChartInstance) return;
+            let newIndex = currentGanttViewIndex + direction;
+            // Clamp index within bounds
+            newIndex = Math.max(0, Math.min(ganttViewModes.length - 1, newIndex));
+            if (newIndex !== currentGanttViewIndex) {
+                currentGanttViewIndex = newIndex;
+                const newMode = ganttViewModes[currentGanttViewIndex];
+                ganttChartInstance.change_view_mode(newMode);
+                ganttCurrentViewSpan.textContent = newMode; // Update display
+            }
+        }
 
-        // Basic Panning (Scrolls the SVG container - Frappe doesn't have direct pan methods)
+        ganttZoomOutBtn.addEventListener('click', () => changeGanttView(1)); // Zoom out -> Wider view (increase index)
+        ganttZoomInBtn.addEventListener('click', () => changeGanttView(-1)); // Zoom in -> Narrower view (decrease index)
+
+
+        // Panning Listeners (using scrollBy on the wrapper div)
         ganttPanLeftBtn.addEventListener('click', () => {
-            if (ganttSvg.parentElement) ganttSvg.parentElement.scrollBy({ left: -200, behavior: 'smooth' });
+            ganttWrapper.scrollBy({ left: -200, behavior: 'smooth' });
         });
         ganttPanRightBtn.addEventListener('click', () => {
-             if (ganttSvg.parentElement) ganttSvg.parentElement.scrollBy({ left: 200, behavior: 'smooth' });
+             ganttWrapper.scrollBy({ left: 200, behavior: 'smooth' });
         });
 
 
@@ -790,6 +831,7 @@
             dataInputArea.value = formatDataForTextarea(initialTasksData);
             // Process the default data initially
             processInitialData(initialTasksData); // Load data, identify suppressions, populate table
+            ganttCurrentViewSpan.textContent = ganttViewModes[currentGanttViewIndex]; // Set initial view display
             // Optionally run calculateSchedule on load?
             // calculateSchedule();
         });
