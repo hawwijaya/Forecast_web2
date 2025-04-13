@@ -4,8 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Maintenance Forecaster</title>
-    <!-- Include Frappe Gantt CSS -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css">
+    <!-- Remove Frappe Gantt CSS -->
+    <!-- <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css"> -->
+    <!-- Include DHTMLX Gantt CSS -->
+    <link href="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.css" rel="stylesheet">
     <style>
         body { font-family: sans-serif; margin: 15px; }
         .input-section, .tab-container, .tab-content { margin-bottom: 15px; }
@@ -18,33 +20,38 @@
         .tab-container button { background-color: #f1f1f1; border: 1px solid #ccc; outline: none; cursor: pointer; padding: 10px 15px; transition: 0.3s; }
         .tab-container button.active { background-color: #ccc; }
         .tab-content { display: none; padding: 10px; border: 1px solid #ccc; border-top: none; }
-        #ganttChart { width: 100%; /* Let SVG size itself initially */ min-height: 200px; /* Optional: ensure a minimum height */ }
-        #gantt-wrapper { width: 100%; overflow-x: auto; margin-top: 10px; } /* Make wrapper scrollable */
+        /* Remove Frappe specific styles */
+        /* #ganttChart { ... } */
+        /* #gantt-wrapper { ... } */
+
+        /* Style for DHTMLX container */
+        #gantt_here {
+            width: 100%;
+            height: 500px; /* Adjust height as needed */
+            margin-top: 10px;
+        }
+
         #taskTable input[type="number"] { width: 60px; } /* Adjust width for duration input */
         #taskTable input[type="checkbox"] { cursor: pointer; }
         .suppression-list { list-style: none; padding: 0; margin: 0; }
         #dataInputArea { width: 98%; height: 150px; margin-top: 5px; font-family: monospace; } /* Style for textarea */
 
-        /* Gantt Bar Colors */
-        .gantt .bar-planned.task-color-0 .bar { fill: #a3a3ff; }
-        .gantt .bar-planned.task-color-1 .bar { fill: #8bc34a; }
-        .gantt .bar-planned.task-color-2 .bar { fill: #ff9800; }
-        .gantt .bar-planned.task-color-3 .bar { fill: #e91e63; }
-        .gantt .bar-planned.task-color-4 .bar { fill: #00bcd4; }
-        /* Add more colors if needed */
+        /* Remove Frappe Bar Colors */
+        /* .gantt .bar-planned... */
 
-        /* Hide default text inside bars if Frappe adds it */
-        .gantt .bar-label { display: none; }
-        .gantt .bar-label.big { display: none; }
+        /* Remove Frappe label hiding */
+        /* .gantt .bar-label ... */
 
 
         @media print {
+            /* Adjust print styles if needed for DHTMLX */
             body * { visibility: hidden; }
             #summaryTab, #summaryTab * { visibility: visible; }
             #summaryTab { position: absolute; left: 0; top: 0; width: 100%; }
-            button#printSummaryBtn { display: none; } /* Hide print button in print view */
+            button#printSummaryBtn { display: none; }
             .tab-container, .input-section, #tasksTab, #ganttTab { display: none; }
-            #dataInputSection { display: none; } /* Hide data input in print view */
+            #dataInputSection { display: none; }
+            #gantt_here { display: none; } /* Hide gantt in summary print */
         }
     </style>
 </head>
@@ -123,6 +130,8 @@
     <!-- Gantt Chart Tab -->
     <div id="ganttTab" class="tab-content">
         <h2>Gantt Chart</h2>
+        <!-- Remove Frappe Controls -->
+        <!--
         <div>
             Controls:
             <button id="ganttPanLeftBtn" title="Pan Left">&lt;&lt;</button>
@@ -131,14 +140,15 @@
             <button id="ganttPanRightBtn" title="Pan Right">&gt;&gt;</button>
             &nbsp; | &nbsp; Current View: <span id="ganttCurrentView">Week</span>
         </div>
-        <!-- Revert to single wrapper -->
-        <div id="gantt-wrapper">
-             <svg id="ganttChart"></svg> <!-- Container for Frappe Gantt -->
-        </div>
+        -->
+        <!-- Replace SVG wrapper/container with DHTMLX div -->
+        <div id="gantt_here"></div>
     </div>
 
-    <!-- Include Frappe Gantt JS -->
-    <script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script>
+    <!-- Remove Frappe Gantt JS -->
+    <!-- <script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script> -->
+    <!-- Include DHTMLX Gantt JS -->
+    <script src="https://cdn.dhtmlx.com/gantt/edge/dhtmlxgantt.js"></script>
 
     <script>
         // --- Initial Data ---
@@ -237,10 +247,7 @@
         ];
 
         let tasks = []; // Array to hold processed task objects
-        let ganttChartInstance = null;
         let allSuppressions = []; // Store all potential suppressions { suppressedById, suppressesId, type: 'explicit'/'implicit', active: true }
-        const ganttViewModes = ['Day', 'Week', 'Month', 'Year']; // Define available modes
-        let currentGanttViewIndex = 1; // Start with 'Week'
 
         // --- DOM Elements ---
         const startDateInput = document.getElementById('startDate');
@@ -252,15 +259,6 @@
         const taskTableBody = document.getElementById('taskTable').querySelector('tbody');
         const summaryTableBody = document.getElementById('summaryTable').querySelector('tbody');
         const printSummaryBtn = document.getElementById('printSummaryBtn');
-        const ganttSvg = document.getElementById('ganttChart');
-        const ganttWrapper = document.getElementById('gantt-wrapper'); // Get the wrapper div
-        // Gantt control buttons updated
-        const ganttPanLeftBtn = document.getElementById('ganttPanLeftBtn');
-        const ganttZoomOutBtn = document.getElementById('ganttZoomOutBtn');
-        const ganttZoomInBtn = document.getElementById('ganttZoomInBtn');
-        const ganttPanRightBtn = document.getElementById('ganttPanRightBtn');
-        const ganttCurrentViewSpan = document.getElementById('ganttCurrentView'); // To display current view
-
 
         // --- Helper Functions ---
 
@@ -643,71 +641,97 @@
             calculateAndRenderSummary(finalSchedule, startDate, analysisEndDate, avgDailyUsage);
         }
 
-        function renderGanttChart(ganttTasks) {
-             const ganttContainer = document.getElementById('ganttChart'); // Target the SVG element directly by ID
-             if (!ganttTasks || ganttTasks.length === 0) {
-                 ganttContainer.innerHTML = '<text x="10" y="20">No tasks to display. Calculate the schedule first.</text>';
-                 ganttChartInstance = null;
-                 return;
-             }
-             ganttContainer.innerHTML = ''; // Clear previous SVG content
+        // --- DHTMLX Gantt Rendering ---
+        function renderGanttChart(scheduleTasks) {
+            const ganttContainer = document.getElementById('gantt_here');
+            // Clear previous chart using API if initialized, otherwise clear container
+            if (typeof gantt !== 'undefined' && gantt.destructor) {
+                 gantt.destructor(); // Properly destroy previous instance
+            }
+            ganttContainer.innerHTML = ''; // Ensure container is empty
 
-            // Prepare data for Frappe Gantt directly from finalSchedule
-            const validGanttTasks = ganttTasks.map((task, index) => ({
-                id: `${task.id}-${task.start}`, // Unique ID for each instance
-                name: `${task.id}: ${task.name}`, // Name used in popup AND rendered by library
-                start: task.start,
-                end: task.end,
-                progress: task.progress,
-                dependencies: '',
-                custom_class: `bar-planned task-color-${task.id % 5}`
-            })).filter(task => task.start && task.end && task.start <= task.end);
+            if (!scheduleTasks || scheduleTasks.length === 0) {
+                ganttContainer.innerHTML = '<p>No tasks to display. Calculate the schedule first.</p>';
+                return;
+            }
+
+            // --- Configure DHTMLX Gantt ---
+            gantt.config.readonly = true; // Make the chart read-only
+            gantt.config.date_format = "%Y-%m-%d"; // Set the format for parsing input dates
+            gantt.config.show_task_name = true; // Deprecated, but safe to keep for older versions
+
+            // Define columns for the grid (left pane) - Remove duration column
+            gantt.config.columns = [
+                { name: "text", label: "Maintenance Item", tree: true, width: '*' },
+                { name: "start_date", label: "Start Date", align: "center", width: 100 },
+                { name: "end_date", label: "End Date", align: "center", width: 100 } // Add end date column
+            ];
+
+            // Adjust timescale and scales as needed
+            gantt.config.scale_unit = "month";
+            gantt.config.date_scale = "%F, %Y"; // Display format for month scale
+            gantt.config.subscales = [
+                 { unit: "week", step: 1, date: "Week #%W" } // Display format for week scale
+            ];
+            gantt.config.scale_height = 50;
+
+            // Configure date formats for display in grid and tooltips
+            const displayDateFormat = gantt.date.date_to_str("%d-%M-%Y"); // Example: 26-April-2025
+            gantt.templates.date_grid = function(date, task) {
+                return displayDateFormat(date);
+            };
+            gantt.templates.tooltip_date_format = gantt.date.date_to_str("%d-%M-%Y"); // Tooltip format
 
 
-             if (validGanttTasks.length === 0) {
-                 ganttContainer.innerHTML = '<text x="10" y="20">No valid tasks with start/end dates found for Gantt chart.</text>';
-                 ganttChartInstance = null;
-                 return;
-             }
+            // Enable tooltips
+            gantt.plugins({
+                tooltip: true
+            });
+            gantt.templates.tooltip_text = function(start, end, task){
+                 // Note: DHTMLX 'end' date in tooltip is exclusive, subtract 1 day for display
+                 const inclusiveEndDate = gantt.date.add(end, -1, "day");
+                return "<b>Task:</b> "+task.text+"<br/><b>Start:</b> " + gantt.templates.tooltip_date_format(start) +
+                       "<br/><b>End:</b> " + gantt.templates.tooltip_date_format(inclusiveEndDate); // Show inclusive end date
+            };
 
+            // --- Prepare Data for DHTMLX ---
+            const dhtmlxData = scheduleTasks.map((task, index) => {
+                const startDate = gantt.date.parseDate(task.start, "xml_date"); // Parse start date string
+                let endDate = gantt.date.parseDate(task.end, "xml_date");   // Parse end date string
+
+                // DHTMLX end_date is exclusive. If start and end are the same (0 duration task),
+                // make end_date the next day for visibility. Otherwise, add 1 day to the inclusive end date.
+                if (endDate <= startDate) {
+                    endDate = gantt.date.add(startDate, 1, "day");
+                } else {
+                    endDate = gantt.date.add(endDate, 1, "day"); // Make the end date exclusive
+                }
+
+                return {
+                    id: `${task.id}-${task.start}`, // Unique ID
+                    text: `${task.id}: ${task.name}`, // Task name displayed in grid
+                    start_date: startDate, // Use Date object
+                    end_date: endDate,     // Use exclusive Date object
+                    progress: (task.progress || 100) / 100, // Progress 0 to 1, default to 1
+                    readonly: true // Ensure individual tasks are also readonly
+                    // color: `task-color-${task.id % 5}` // Example for custom styling via task_class template
+                };
+            });
+
+             // Optional: Add custom styling based on ID
+             gantt.templates.task_class = function(start, end, task){
+                 const colorIndex = parseInt(task.id.split('-')[0]) % 5; // Get original ID and calculate index
+                 return `task-color-${colorIndex}`;
+             };
+
+
+            // --- Initialize and Load Data ---
             try {
-                 // Target the SVG element *by ID selector*
-                 ganttChartInstance = new Gantt("#ganttChart", validGanttTasks, {
-                     header_height: 50,
-                     column_width: 30,
-                     step: 24,
-                     view_modes: ['Day', 'Week', 'Month', 'Year'],
-                     bar_height: 20,
-                     bar_corner_radius: 3,
-                     arrow_curve: 5,
-                     padding: 18,
-                     view_mode: ganttViewModes[currentGanttViewIndex],
-                     date_format: 'YYYY-MM-DD',
-                     language: 'en',
-                     custom_popup_html: function(task) {
-                         // Popup provides full task details on hover
-                         return `
-                             <div class="details-container" style="padding: 5px; font-size: 12px;">
-                                 <h5>${task.name}</h5>
-                                 <p>Start: ${task.start}</p>
-                                 <p>End: ${task.end}</p>
-                             </div>
-                         `;
-                     },
-                     on_click: function (task) { console.log('Clicked:', task); },
-                     on_date_change: function(task, start, end) { console.log('Date Changed:', task, start, end); },
-                     on_progress_change: function(task, progress) { console.log('Progress Changed:', task, progress); },
-                     on_view_change: function(mode) {
-                         console.log('View Changed:', mode);
-                         currentGanttViewIndex = ganttViewModes.indexOf(mode);
-                         ganttCurrentViewSpan.textContent = mode;
-                     }
-                 });
-
+                gantt.init("gantt_here"); // Initialize Gantt in the container
+                gantt.parse({ data: dhtmlxData }); // Load the data
             } catch (e) {
-                 console.error("Error creating Gantt chart:", e);
-                 ganttContainer.innerHTML = `<text x="10" y="20" style="fill: red;">Error creating Gantt chart: ${e.message}</text>`;
-                 ganttChartInstance = null;
+                console.error("Error creating DHTMLX Gantt chart:", e);
+                ganttContainer.innerHTML = `<p style="color: red;">Error creating Gantt chart: ${e.message}</p>`;
             }
         }
 
@@ -780,40 +804,15 @@
                  processInitialData(newData); // Reprocess with data from textarea
                  // Optionally clear schedule/summary/gantt or require recalculation
                  summaryTableBody.innerHTML = '<tr><td colspan="5">Data loaded. Please Calculate Schedule.</td></tr>';
-                 ganttSvg.innerHTML = '<p>Data loaded. Please Calculate Schedule.</p>';
-                 ganttChartInstance = null;
+                 // Clear DHTMLX Gantt
+                 if (typeof gantt !== 'undefined' && gantt.clearAll) {
+                     gantt.clearAll();
+                 }
+                 document.getElementById('gantt_here').innerHTML = '<p>Data loaded. Please Calculate Schedule.</p>';
             } else {
                 alert("No valid data found in the text area to load.");
             }
         });
-
-
-        // Gantt Control Listeners - Updated
-        function changeGanttView(direction) {
-            if (!ganttChartInstance) return;
-            let newIndex = currentGanttViewIndex + direction;
-            // Clamp index within bounds
-            newIndex = Math.max(0, Math.min(ganttViewModes.length - 1, newIndex));
-            if (newIndex !== currentGanttViewIndex) {
-                currentGanttViewIndex = newIndex;
-                const newMode = ganttViewModes[currentGanttViewIndex];
-                ganttChartInstance.change_view_mode(newMode);
-                ganttCurrentViewSpan.textContent = newMode; // Update display
-            }
-        }
-
-        ganttZoomOutBtn.addEventListener('click', () => changeGanttView(1)); // Zoom out -> Wider view (increase index)
-        ganttZoomInBtn.addEventListener('click', () => changeGanttView(-1)); // Zoom in -> Narrower view (decrease index)
-
-
-        // Panning Listeners (using scrollBy on the wrapper div)
-        ganttPanLeftBtn.addEventListener('click', () => {
-            ganttWrapper.scrollBy({ left: -200, behavior: 'smooth' });
-        });
-        ganttPanRightBtn.addEventListener('click', () => {
-             ganttWrapper.scrollBy({ left: 200, behavior: 'smooth' });
-        });
-
 
         // --- Initialization ---
         document.addEventListener('DOMContentLoaded', () => {
@@ -821,12 +820,24 @@
             dataInputArea.value = formatDataForTextarea(initialTasksData);
             // Process the default data initially
             processInitialData(initialTasksData); // Load data, identify suppressions, populate table
-            ganttCurrentViewSpan.textContent = ganttViewModes[currentGanttViewIndex]; // Set initial view display
             // Optionally run calculateSchedule on load?
             // calculateSchedule();
         });
 
     </script>
+    <!-- Add CSS for custom task colors -->
+    <style>
+        .gantt_task_line.task-color-0 .gantt_task_content { background-color: #a3a3ff; }
+        .gantt_task_line.task-color-0 { border-color: #7d7dff; }
+        .gantt_task_line.task-color-1 .gantt_task_content { background-color: #8bc34a; }
+        .gantt_task_line.task-color-1 { border-color: #689f38; }
+        .gantt_task_line.task-color-2 .gantt_task_content { background-color: #ff9800; }
+        .gantt_task_line.task-color-2 { border-color: #f57c00; }
+        .gantt_task_line.task-color-3 .gantt_task_content { background-color: #e91e63; }
+        .gantt_task_line.task-color-3 { border-color: #c2185b; }
+        .gantt_task_line.task-color-4 .gantt_task_content { background-color: #00bcd4; }
+        .gantt_task_line.task-color-4 { border-color: #0097a7; }
+    </style>
 
 </body>
 </html>
