@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Maintenance Forecaster</title>
+    <!-- Include Frappe Gantt CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css">
+    <style>
+        body { font-family: sans-serif; margin: 15px; }
+        .input-section, .tab-container, .tab-content { margin-bottom: 15px; }
+        label { margin-right: 5px; }
+        input[type="date"], input[type="number"] { margin-right: 15px; padding: 5px; }
+        button { padding: 8px 15px; margin-right: 5px; cursor: pointer; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .tab-container button { background-color: #f1f1f1; border: 1px solid #ccc; outline: none; cursor: pointer; padding: 10px 15px; transition: 0.3s; }
+        .tab-container button.active { background-color: #ccc; }
+        .tab-content { display: none; padding: 10px; border: 1px solid #ccc; border-top: none; }
+        #ganttChart { width: 100%; }
+        #taskTable input[type="number"] { width: 60px; } /* Adjust width for duration input */
+        #taskTable input[type="checkbox"] { cursor: pointer; }
+        .suppression-list { list-style: none; padding: 0; margin: 0; }
+        .suppression-list li { margin-bottom: 3px; }
+
+        @media print {
+            body * { visibility: hidden; }
+            #summaryTab, #summaryTab * { visibility: visible; }
+            #summaryTab { position: absolute; left: 0; top: 0; width: 100%; }
+            button#printSummaryBtn { display: none; } /* Hide print button in print view */
+            .tab-container, .input-section, #tasksTab, #ganttTab { display: none; }
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Maintenance Forecaster</h1>
+
+    <!-- Input Section -->
+    <div class="input-section">
+        <label for="startDate">Analysis Start Date:</label>
+        <input type="date" id="startDate" value="2025-04-26">
+        <label for="initialAge">Initial Equipment Age (Hours):</label>
+        <input type="number" id="initialAge" value="0" min="0">
+        <label for="avgDailyUsage">Average Daily Usage (Hours):</label>
+        <input type="number" id="avgDailyUsage" value="16" min="1" max="24">
+        <button id="calculateBtn">Calculate Schedule</button>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tab-container">
+        <button class="tab-button active" onclick="openTab(event, 'tasksTab')">Tasks & Suppressions</button>
+        <button class="tab-button" onclick="openTab(event, 'summaryTab')">Monthly Summary</button>
+        <button class="tab-button" onclick="openTab(event, 'ganttTab')">Gantt Chart</button>
+    </div>
+
+    <!-- Task Input/Management Tab -->
+    <div id="tasksTab" class="tab-content" style="display:block;">
+        <h2>Maintenance Tasks</h2>
+        <p>Review tasks, edit durations, and manage suppression activation.</p>
+        <table id="taskTable">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Maintenance Item</th>
+                    <th>Frequency</th>
+                    <th>Duration (Hours)</th>
+                    <th>Suppression Items (Explicit)</th>
+                    <th>Suppressed By (Implicit/Explicit)</th>
+                    <th>Activate Suppressions</th> <!-- Checkboxes for each suppression link -->
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Task rows will be populated by JavaScript -->
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Monthly Summary Tab -->
+    <div id="summaryTab" class="tab-content">
+        <h2>Monthly Summary</h2>
+        <button id="printSummaryBtn">Print Summary</button>
+        <table id="summaryTable">
+            <thead>
+                <tr>
+                    <th>Month</th>
+                    <th>Total Hours</th> <!-- Total hours in the month -->
+                    <th>Downtime Hours</th> <!-- Sum of durations of tasks in the month -->
+                    <th>Availability (%)</th> <!-- (Total - Downtime) / Total * 100 -->
+                    <th>Tasks Due</th> <!-- List of task IDs/Names -->
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Summary rows will be populated by JavaScript -->
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Gantt Chart Tab -->
+    <div id="ganttTab" class="tab-content">
+        <h2>Gantt Chart</h2>
+        <div>
+            Time Scale:
+            <button id="ganttDayBtn">Day</button>
+            <button id="ganttWeekBtn">Week</button>
+            <button id="ganttMonthBtn">Month</button>
+            <button id="ganttYearBtn">Year</button>
+            &nbsp; | &nbsp; Pan:
+            <button id="ganttPanLeftBtn">&lt;&lt;</button>
+            <button id="ganttPanRightBtn">&gt;&gt;</button>
+            <!-- Zoom controls could be added here if needed -->
+        </div>
+        <svg id="ganttChart"></svg> <!-- Container for Frappe Gantt -->
+    </div>
+
+    <!-- Include Frappe Gantt JS -->
+    <script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script>
+
+    <script>
+        // --- Initial Data ---
+        const initialTasksData = [
+            { id: 1, name: "16W Mech Svce Loader WA1200-6", frequency: "16W", duration: 22, suppressions: "4" },
+            { id: 2, name: "1W Svce Lodr Daily Zone", frequency: "1W", duration: 0, suppressions: "none" },
+            { id: 3, name: "2W Mech Svce Loader WA1200-6", frequency: "2W", duration: 7, suppressions: "8, 7, 1, 4" },
+            { id: 4, name: "32W Mech Svce Loader WA1200-6", frequency: "32W", duration: 19, suppressions: "none" },
+            { id: 5, name: "4W Hyd Hose Insp Zone A WA1200-6", frequency: "4W", duration: 0, suppressions: "7" },
+            { id: 6, name: "4W Hyd Hose Insp Zone B WA1200-6", frequency: "4W", duration: 0, suppressions: "7" },
+            { id: 7, name: "4W Mech Svce Loader WA1200-6", frequency: "4W", duration: 15, suppressions: "8, 4, 1" },
+            { id: 8, name: "8W Mech Svce Loader WA1200-6", frequency: "8W", duration: 17, suppressions: "4, 1" },
+            { id: 9, name: "16W Insp EMV Comp", frequency: "16W", duration: 1, suppressions: "none" },
+            { id: 10, name: "10Y Stat Repl Brke Acum", frequency: "10Y", duration: 0, suppressions: "none" },
+            { id: 11, name: "240W Insp Stat Fire Syst WA1200-6", frequency: "240W", duration: 0, suppressions: "none" },
+            { id: 12, name: "24W Insp Fuel Fast Fill Syst", frequency: "24W", duration: 1.5, suppressions: "none" },
+            { id: 13, name: "24W Insp Stat Fire Syst WA1200-6", frequency: "24W", duration: 0, suppressions: "none" },
+            { id: 14, name: "24W Test Ulsc Cabn Seal", frequency: "24W", duration: 2, suppressions: "none" },
+            { id: 15, name: "26W Tech Insp CAS Syst", frequency: "26W", duration: 1, suppressions: "none" },
+            { id: 16, name: "2Y Stat Insp Ext Brke Acum", frequency: "2Y", duration: 1, suppressions: "none" },
+            { id: 17, name: "4000H Repl Fuel Hoses WA1200-6", frequency: "4000H", duration: 3, suppressions: "none" },
+            { id: 18, name: "48W Insp Stat Fire Syst WA1200-6", frequency: "48W", duration: 0, suppressions: "none" },
+            { id: 19, name: "6M Sfty Insp WAH Anch Pont", frequency: "6M", duration: 0, suppressions: "none" },
+            { id: 20, name: "26W Mech Cond Mntr NDT", frequency: "26W", duration: 6, suppressions: "none" },
+            { id: 21, name: "52W Mech Cond Mntr NDT", frequency: "52W", duration: 34, suppressions: "none" },
+            { id: 22, name: "10000H Repl Bckt Pins WA1200-6", frequency: "10000H", duration: 0, suppressions: "none" },
+            { id: 23, name: "10000H Repl Blcr Pins WA1200-6", frequency: "10000H", duration: 0, suppressions: "none" },
+            { id: 24, name: "10000H Repl Btm Vlve Sfty Suction", frequency: "10000H", duration: 0, suppressions: "55" },
+            { id: 25, name: "10000H Repl Ctr Vlve Sfty Suction", frequency: "10000H", duration: 0, suppressions: "56" },
+            { id: 26, name: "10000H Repl Top Vlve Sfty Suction", frequency: "10000H", duration: 0, suppressions: "59" },
+            { id: 27, name: "12000H Engi Drive Shaft WA1200-6", frequency: "12000H", duration: 3, suppressions: "none" },
+            { id: 28, name: "12000H Repl Both Brke Tredle Vlve", frequency: "12000H", duration: 11.5, suppressions: "none" },
+            { id: 29, name: "12000H Repl Brng Driv CTR", frequency: "12000H", duration: 5.5, suppressions: "none" },
+            { id: 30, name: "12000H Repl Engi Dapr WA1200", frequency: "12000H", duration: 26, suppressions: "none" },
+            { id: 31, name: "12000H Repl Matl Engi Mid WA1200", frequency: "12000H", duration: 27, suppressions: "67" },
+            { id: 32, name: "12000H Repl ROS Pumps WA1200-6", frequency: "12000H", duration: 8, suppressions: "none" },
+            { id: 33, name: "16000H Repl Brke Colr Fan Motr", frequency: "16000H", duration: 5.5, suppressions: "none" },
+            { id: 34, name: "16000H Repl Colr Tran WA1200", frequency: "16000H", duration: 10.5, suppressions: "none" },
+            { id: 35, name: "16000H Repl Emer Ster Syst", frequency: "16000H", duration: 6, suppressions: "none" },
+            { id: 36, name: "16000H Repl Impt Pump P1 WA1200", frequency: "16000H", duration: 11, suppressions: "none" },
+            { id: 37, name: "16000H Repl Impt Pump P2 WA1200", frequency: "16000H", duration: 11, suppressions: "none" },
+            { id: 38, name: "16000H Repl LH Dump Cyli WA1200-6", frequency: "16000H", duration: 20, suppressions: "none" },
+            { id: 39, name: "16000H Repl LH Lift Cyli WA1200-6", frequency: "16000H", duration: 52, suppressions: "none" },
+            { id: 40, name: "16000H Repl Pump Emer Ster LWR", frequency: "16000H", duration: 6, suppressions: "none" },
+            { id: 41, name: "16000H Repl Pump Emer Ster UPR", frequency: "16000H", duration: 6, suppressions: "none" },
+            { id: 42, name: "16000H Repl Pump Ster", frequency: "16000H", duration: 6, suppressions: "none" },
+            { id: 43, name: "16000H Repl RH Dump Cyli WA1200-6", frequency: "16000H", duration: 20, suppressions: "none" },
+            { id: 44, name: "16000H Repl RH Lift Cyli WA1200-6", frequency: "16000H", duration: 52, suppressions: "none" },
+            { id: 45, name: "16000H Repl Ster Cyli L", frequency: "16000H", duration: 7, suppressions: "none" },
+            { id: 46, name: "16000H Repl Ster Cyli R", frequency: "16000H", duration: 7, suppressions: "none" },
+            { id: 47, name: "16000H Repl Ster Demand Vlve L", frequency: "16000H", duration: 5.5, suppressions: "none" },
+            { id: 48, name: "16000H Repl Ster Demand Vlve R", frequency: "16000H", duration: 5.5, suppressions: "none" },
+            { id: 49, name: "16000H Repl Swch Pump WA1200-6", frequency: "16000H", duration: 6, suppressions: "none" },
+            { id: 50, name: "16000H Repl Tran & TC WA1200", frequency: "16000H", duration: 16, suppressions: "none" },
+            { id: 51, name: "16000H Repl Tran Pump WA1200-6", frequency: "16000H", duration: 6, suppressions: "none" },
+            { id: 52, name: "16000H Repl Trop Hydr Colr", frequency: "16000H", duration: 8, suppressions: "none" },
+            { id: 53, name: "20000H Ovhl Brng Artc", frequency: "20000H", duration: 170, suppressions: "none" },
+            { id: 54, name: "20000H Repl Bckt", frequency: "20000H", duration: 41, suppressions: "none" },
+            { id: 55, name: "20000H Repl Btm Hydr Ctrl Vlve", frequency: "20000H", duration: 20, suppressions: "none" },
+            { id: 56, name: "20000H Repl Ctre Hydr Ctrl Vlve", frequency: "20000H", duration: 20, suppressions: "none" },
+            { id: 57, name: "20000H Repl Frme Pins & Bushes", frequency: "20000H", duration: 0, suppressions: "56" },
+            { id: 58, name: "20000H Repl Pilt Ctrl Vlve WA1200", frequency: "20000H", duration: 6, suppressions: "none" },
+            { id: 59, name: "20000H Repl Top Hydr Ctrl Vlve", frequency: "20000H", duration: 14, suppressions: "none" },
+            { id: 60, name: "24000H Ovhl A/C WA1200-6", frequency: "24000H", duration: 16, suppressions: "67" },
+            { id: 61, name: "24000H Repl Axle Assy F WA1200-6", frequency: "24000H", duration: 39.5, suppressions: "none" },
+            { id: 62, name: "24000H Repl Axle Assy R WA1200-6", frequency: "24000H", duration: 41.5, suppressions: "none" },
+            { id: 63, name: "24000H Repl Brng Axle Ocil", frequency: "24000H", duration: 0, suppressions: "62" },
+            { id: 64, name: "24000H Repl Driv Shft CTR WA1200", frequency: "24000H", duration: 5.5, suppressions: "62" },
+            { id: 65, name: "24000H Repl Driv Shft F WA1200", frequency: "24000H", duration: 5.5, suppressions: "62" },
+            { id: 66, name: "24000H Repl Driv Shft R WA1200", frequency: "24000H", duration: 5.5, suppressions: "62" },
+            { id: 67, name: "24000H Repl Engi Assy", frequency: "24000H", duration: 84, suppressions: "none" },
+            { id: 68, name: "24000H Repl Fan WA1200-6", frequency: "24000H", duration: 5.5, suppressions: "none" },
+            { id: 69, name: "24000H Repl Hydr Colr WA1200-6", frequency: "24000H", duration: 10, suppressions: "none" },
+            { id: 70, name: "24000H Repl Rdtr WA1200-6", frequency: "24000H", duration: 16, suppressions: "none" },
+            { id: 71, name: "4000H Repl Brke Hoses", frequency: "4000H", duration: 11, suppressions: "none" },
+            { id: 72, name: "4000H Repl Brke Pumps WA1200-6", frequency: "4000H", duration: 6, suppressions: "none" },
+            { id: 73, name: "4000H Repl Hydr Hose WA1200-6", frequency: "4000H", duration: 18, suppressions: "none" },
+            { id: 74, name: "4000H Repl LH Lift Cyli Hose", frequency: "4000H", duration: 6, suppressions: "none" },
+            { id: 75, name: "4000H Repl LH Tilt Cyli Hose", frequency: "4000H", duration: 10.5, suppressions: "none" },
+            { id: 76, name: "4000H Repl RH Lift Cyli Hose", frequency: "4000H", duration: 6, suppressions: "none" },
+            { id: 77, name: "4000H Repl RH Tilt Cyli Hose", frequency: "4000H", duration: 4, suppressions: "none" },
+            { id: 78, name: "5000H Repl Hose Htch Cntr", frequency: "5000H", duration: 6, suppressions: "none" },
+            { id: 79, name: "52W Repl Batteries WA1200-6", frequency: "52W", duration: 5, suppressions: "none" },
+            { id: 80, name: "52W Repl Oper Seat WA1200-6", frequency: "52W", duration: 1.5, suppressions: "none" },
+            { id: 81, name: "52W Svce A/C Syst WA1200-6", frequency: "52W", duration: 12, suppressions: "none" },
+            { id: 82, name: "6000H Repl Eng Driv Shft Uvsl", frequency: "6000H", duration: 0, suppressions: "none" },
+            { id: 83, name: "6000H Repl Uvsl Driv Shft CTR", frequency: "6000H", duration: 4.5, suppressions: "none" },
+            { id: 84, name: "6000H Repl Uvsl Driv Shft F", frequency: "6000H", duration: 4.5, suppressions: "none" },
+            { id: 85, name: "6000H Repl Uvsl Driv Shft R", frequency: "6000H", duration: 4.5, suppressions: "none" },
+            { id: 86, name: "6M Hyd Tune Up OEM WA1200-6", frequency: "6M", duration: 5.5, suppressions: "none" },
+            { id: 87, name: "8000H Repl Brke Hoses", frequency: "8000H", duration: 16, suppressions: "none" },
+            { id: 88, name: "8000H Repl Ster Cyli Hose L", frequency: "8000H", duration: 5, suppressions: "none" },
+            { id: 89, name: "8000H Repl Ster Cyli Hose R", frequency: "8000H", duration: 5, suppressions: "none" },
+            { id: 90, name: "6000H Repl Grease Pump & dump vlve", frequency: "6000H", duration: 6, suppressions: "none" },
+            { id: 91, name: "12000H Engine Harness", frequency: "12000H", duration: 4, suppressions: "none" }
+        ];
+
+        let tasks = []; // Array to hold processed task objects
+        let ganttChartInstance = null;
+        let allSuppressions = []; // Store all potential suppressions { suppressedById, suppressesId, type: 'explicit'/'implicit', active: true }
+
+        // --- DOM Elements ---
+        const startDateInput = document.getElementById('startDate');
+        const initialAgeInput = document.getElementById('initialAge');
+        const avgDailyUsageInput = document.getElementById('avgDailyUsage');
+        const calculateBtn = document.getElementById('calculateBtn');
+        const taskTableBody = document.getElementById('taskTable').querySelector('tbody');
+        const summaryTableBody = document.getElementById('summaryTable').querySelector('tbody');
+        const printSummaryBtn = document.getElementById('printSummaryBtn');
+        const ganttSvg = document.getElementById('ganttChart');
+        const ganttDayBtn = document.getElementById('ganttDayBtn');
+        const ganttWeekBtn = document.getElementById('ganttWeekBtn');
+        const ganttMonthBtn = document.getElementById('ganttMonthBtn');
+        const ganttYearBtn = document.getElementById('ganttYearBtn');
+        const ganttPanLeftBtn = document.getElementById('ganttPanLeftBtn');
+        const ganttPanRightBtn = document.getElementById('ganttPanRightBtn');
+
+        // --- Helper Functions ---
+
+        function openTab(evt, tabName) {
+            // Basic tab switching logic
+            let i, tabcontent, tablinks;
+            tabcontent = document.getElementsByClassName("tab-content");
+            for (i = 0; i < tabcontent.length; i++) {
+                tabcontent[i].style.display = "none";
+            }
+            tablinks = document.getElementsByClassName("tab-button");
+            for (i = 0; i < tablinks.length; i++) {
+                tablinks[i].className = tablinks[i].className.replace(" active", "");
+            }
+            document.getElementById(tabName).style.display = "block";
+            evt.currentTarget.className += " active";
+        }
+
+        function parseFrequency(freqStr) {
+            // Parses frequency string (e.g., "16W", "4000H", "6M", "2Y") into hours and type
+            const match = freqStr.match(/^(\d+)([WHM Y])$/i); // Allow space for Y
+             if (!match) return { value: 0, unit: null, type: null, hours: 0 };
+
+            const value = parseInt(match[1], 10);
+            const unit = match[2].toUpperCase();
+            let hours = 0;
+            let type = 'calendar'; // Default
+
+            switch (unit) {
+                case 'W': hours = value * 7 * 24; break;
+                case 'M': hours = value * 30.44 * 24; break; // Approximate
+                case 'Y': hours = value * 365.25 * 24; break; // Approximate
+                case 'H': hours = value; type = 'hourly'; break;
+                default: return { value: 0, unit: null, type: null, hours: 0 };
+            }
+            return { value, unit, type, hours };
+        }
+
+        function formatDate(date) {
+            // Simple YYYY-MM-DD formatter
+            if (!(date instanceof Date)) return '';
+            const year = date.getFullYear();
+            const month = (date.getMonth() + 1).toString().padStart(2, '0');
+            const day = date.getDate().toString().padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
+        function addDays(date, days) {
+            const result = new Date(date);
+            result.setDate(result.getDate() + days);
+            return result;
+        }
+
+        // --- Core Logic Functions (Placeholders - Need Implementation) ---
+
+        function processInitialData() {
+            tasks = initialTasksData.map(task => ({
+                ...task,
+                duration: parseFloat(task.duration) || 0,
+                frequencyData: parseFrequency(task.frequency),
+                explicitSuppressions: task.suppressions === 'none' ? [] : task.suppressions.split(',').map(s => parseInt(s.trim(), 10)).filter(id => !isNaN(id)),
+                suppressedBy: [], // To be populated
+                activeSuppressions: {} // Store state like { suppressedById: true/false }
+            }));
+            identifySuppressions();
+            populateTaskTable();
+        }
+
+        function identifySuppressions() {
+            allSuppressions = [];
+            const taskMap = new Map(tasks.map(t => [t.id, t]));
+
+            tasks.forEach(task => {
+                task.suppressedBy = []; // Reset before recalculating
+
+                // 1. Explicit Suppressions (Task A suppresses Task B if B lists A in its suppressions)
+                task.explicitSuppressions.forEach(suppressorId => {
+                    if (taskMap.has(suppressorId)) {
+                         const suppressorTask = taskMap.get(suppressorId);
+                         const suppression = { suppressedById: suppressorId, suppressesId: task.id, type: 'explicit', active: true };
+                         allSuppressions.push(suppression);
+                         task.suppressedBy.push({ id: suppressorId, type: 'explicit' });
+                         // Initialize active state
+                         if (!task.activeSuppressions.hasOwnProperty(suppressorId)) {
+                             task.activeSuppressions[suppressorId] = true;
+                         }
+                    }
+                });
+
+                // 2. Implicit Suppressions (Higher frequency suppresses lower if names match)
+                tasks.forEach(potentialSuppressor => {
+                    if (task.id === potentialSuppressor.id) return; // Don't compare with self
+
+                    // Basic name matching (can be improved)
+                    if (task.name === potentialSuppressor.name) {
+                        const freqA = task.frequencyData;
+                        const freqB = potentialSuppressor.frequencyData;
+
+                        // Only compare if both are valid and have hours
+                        if (freqA.hours > 0 && freqB.hours > 0) {
+                            // B suppresses A if B's frequency is a multiple of A's, and B > A
+                            if (freqB.hours > freqA.hours && freqB.hours % freqA.hours === 0) {
+                                const suppression = { suppressedById: potentialSuppressor.id, suppressesId: task.id, type: 'implicit', active: true };
+                                // Avoid duplicates if already explicitly defined
+                                if (!allSuppressions.some(s => s.suppressedById === potentialSuppressor.id && s.suppressesId === task.id)) {
+                                    allSuppressions.push(suppression);
+                                    task.suppressedBy.push({ id: potentialSuppressor.id, type: 'implicit' });
+                                     if (!task.activeSuppressions.hasOwnProperty(potentialSuppressor.id)) {
+                                         task.activeSuppressions[potentialSuppressor.id] = true;
+                                     }
+                                }
+                            }
+                            // Handle Hourly vs Calendar suppression (if needed - complex logic)
+                            // Example: If B is Hourly and A is Calendar, B might suppress A if times align
+                        }
+                    }
+                });
+            });
+             // Update task table after identification
+             populateTaskTable();
+        }
+
+
+        function populateTaskTable() {
+            taskTableBody.innerHTML = ''; // Clear existing rows
+            const taskMap = new Map(tasks.map(t => [t.id, t]));
+
+            tasks.forEach(task => {
+                const row = taskTableBody.insertRow();
+                row.insertCell().textContent = task.id;
+                row.insertCell().textContent = task.name;
+                row.insertCell().textContent = task.frequency;
+
+                // Editable Duration
+                const durationCell = row.insertCell();
+                const durationInput = document.createElement('input');
+                durationInput.type = 'number';
+                durationInput.value = task.duration;
+                durationInput.min = 0;
+                durationInput.step = 0.1;
+                durationInput.dataset.taskId = task.id;
+                durationInput.addEventListener('change', handleDurationChange);
+                durationCell.appendChild(durationInput);
+
+                // Explicit Suppressions (What this task suppresses)
+                row.insertCell().textContent = task.explicitSuppressions.length > 0 ? task.explicitSuppressions.join(', ') : 'none';
+
+                // Suppressed By (List of tasks suppressing this one)
+                const suppressedByCell = row.insertCell();
+                suppressedByCell.innerHTML = task.suppressedBy.map(s => {
+                    const suppressor = taskMap.get(s.id);
+                    return `ID ${s.id} (${s.type})${suppressor ? ': ' + suppressor.name : ''}`;
+                }).join('<br>');
+
+
+                // Activation Checkboxes
+                const activationCell = row.insertCell();
+                const suppressionList = document.createElement('ul');
+                suppressionList.className = 'suppression-list';
+                task.suppressedBy.forEach(s => {
+                    const suppressor = taskMap.get(s.id);
+                    if (!suppressor) return;
+
+                    const listItem = document.createElement('li');
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.checked = task.activeSuppressions[s.id] !== false; // Default to true if not set
+                    checkbox.dataset.taskId = task.id;
+                    checkbox.dataset.suppressorId = s.id;
+                    checkbox.addEventListener('change', handleSuppressionToggle);
+
+                    const label = document.createElement('label');
+                    label.appendChild(checkbox);
+                    label.append(` Suppressed by ID ${s.id} (${s.type})`);
+                    listItem.appendChild(label);
+                    suppressionList.appendChild(listItem);
+                });
+                 activationCell.appendChild(suppressionList);
+            });
+        }
+
+        function handleDurationChange(event) {
+            const taskId = parseInt(event.target.dataset.taskId, 10);
+            const newDuration = parseFloat(event.target.value) || 0;
+            const task = tasks.find(t => t.id === taskId);
+            if (task) {
+                task.duration = newDuration;
+                console.log(`Task ${taskId} duration updated to ${newDuration}`);
+                // Optionally trigger recalculation immediately or wait for the main button
+            }
+        }
+
+        function handleSuppressionToggle(event) {
+            const taskId = parseInt(event.target.dataset.taskId, 10);
+            const suppressorId = parseInt(event.target.dataset.suppressorId, 10);
+            const isActive = event.target.checked;
+            const task = tasks.find(t => t.id === taskId);
+            if (task) {
+                 task.activeSuppressions[suppressorId] = isActive;
+                 console.log(`Suppression of Task ${taskId} by Task ${suppressorId} set to ${isActive}`);
+                 // Update the global suppression state as well
+                 const suppressionLink = allSuppressions.find(s => s.suppressesId === taskId && s.suppressedById === suppressorId);
+                 if (suppressionLink) {
+                     suppressionLink.active = isActive;
+                 }
+                 // Optionally trigger recalculation or wait for the main button
+            }
+        }
+
+
+        function calculateSchedule() {
+            console.log("Calculating schedule...");
+            const startDate = new Date(startDateInput.value);
+            const initialAge = parseFloat(initialAgeInput.value) || 0;
+            const avgDailyUsage = parseFloat(avgDailyUsageInput.value) || 1; // Avoid division by zero
+
+            if (isNaN(startDate.getTime())) {
+                alert("Invalid Start Date");
+                return;
+            }
+             if (avgDailyUsage <= 0) {
+                 alert("Average Daily Usage must be positive.");
+                 return;
+             }
+
+            let scheduledTasks = [];
+            let maxDate = new Date(startDate); // Track latest date for analysis end
+
+            // --- Determine Analysis End Date (e.g., 5 years or longest cycle * 2) ---
+            let maxHours = 0;
+            tasks.forEach(task => {
+                if (task.frequencyData.hours > maxHours) {
+                    maxHours = task.frequencyData.hours;
+                }
+            });
+            // Example: End date is 5 years from start or start + 2 * longest cycle in days
+            const fiveYearsLater = new Date(startDate);
+            fiveYearsLater.setFullYear(startDate.getFullYear() + 5);
+            const longestCycleEndDate = addDays(startDate, (maxHours / avgDailyUsage) * 2); // Estimate days for longest hourly cycle
+            const analysisEndDate = new Date(Math.max(fiveYearsLater, longestCycleEndDate));
+
+
+            console.log(`Analysis Period: ${formatDate(startDate)} to ${formatDate(analysisEndDate)}`);
+
+            // --- Generate Occurrences for each task ---
+            tasks.forEach(task => {
+                if (!task.frequencyData || task.frequencyData.hours <= 0) return; // Skip tasks without valid frequency
+
+                let nextDueDate = null;
+                let nextDueHour = null;
+                const freqHours = task.frequencyData.hours;
+
+                if (task.frequencyData.type === 'hourly') {
+                    const hoursRemaining = freqHours - (initialAge % freqHours);
+                    nextDueHour = initialAge + hoursRemaining;
+                    const daysUntilNext = (nextDueHour - initialAge) / avgDailyUsage;
+                    nextDueDate = addDays(startDate, daysUntilNext);
+                } else { // Calendar based
+                    // Simple approach: first occurrence is freq away from start date
+                    // More complex: align with week/month/year boundaries if needed
+                    const daysToAdd = freqHours / 24; // Convert calendar frequency hours to days
+                    nextDueDate = addDays(startDate, daysToAdd);
+                    // Estimate equivalent hour for calendar task for comparison (optional)
+                    // nextDueHour = initialAge + (daysToAdd * avgDailyUsage);
+                }
+
+                // Generate future occurrences until analysisEndDate
+                let currentDueDate = nextDueDate;
+                let currentDueHour = nextDueHour; // Keep track for hourly tasks
+
+                while (currentDueDate <= analysisEndDate) {
+                    // Add task instance to a temporary list for suppression check
+                     scheduledTasks.push({
+                         id: task.id,
+                         name: task.name,
+                         start: formatDate(currentDueDate),
+                         end: formatDate(addDays(currentDueDate, task.duration / avgDailyUsage)), // Estimate end date based on duration
+                         progress: 100, // Mark as planned
+                         custom_class: 'bar-planned', // For styling
+                         // Store original data for suppression check
+                         originalTask: task,
+                         dueDate: new Date(currentDueDate), // Keep Date object
+                         dueHour: currentDueHour // Keep track of hour milestone if applicable
+                     });
+
+                    // Calculate next occurrence
+                    if (task.frequencyData.type === 'hourly') {
+                        currentDueHour += freqHours;
+                        const daysUntilNext = (currentDueHour - initialAge) / avgDailyUsage;
+                        currentDueDate = addDays(startDate, daysUntilNext);
+                    } else {
+                        const daysToAdd = freqHours / 24;
+                        currentDueDate = addDays(currentDueDate, daysToAdd);
+                    }
+                }
+                 if (currentDueDate > maxDate) maxDate = currentDueDate; // Update max date seen
+            });
+
+            // --- Apply Active Suppressions ---
+            const finalSchedule = [];
+            scheduledTasks.sort((a, b) => a.dueDate - b.dueDate); // Sort by date
+
+            scheduledTasks.forEach(taskInstance => {
+                let isSuppressed = false;
+                const taskDefinition = taskInstance.originalTask;
+
+                // Find suppressions targeting this task definition where the suppressor is active
+                const activeSuppressors = allSuppressions.filter(s =>
+                    s.suppressesId === taskDefinition.id && s.active
+                );
+
+                for (const suppression of activeSuppressors) {
+                    const suppressorId = suppression.suppressedById;
+                    // Check if a task instance of the suppressor occurs at roughly the same time
+                    const suppressorInstance = scheduledTasks.find(supInstance =>
+                        supInstance.id === suppressorId &&
+                        Math.abs(supInstance.dueDate.getTime() - taskInstance.dueDate.getTime()) < (1000 * 60 * 60 * 12) // Tolerance: 12 hours
+                        // Add hour check if comparing hourly tasks more precisely
+                    );
+
+                    if (suppressorInstance) {
+                        console.log(`Task ${taskInstance.id} on ${taskInstance.start} suppressed by Task ${suppressorId} on ${suppressorInstance.start}`);
+                        isSuppressed = true;
+                        break; // One active suppression is enough
+                    }
+                }
+
+                if (!isSuppressed) {
+                    finalSchedule.push(taskInstance);
+                }
+            });
+
+
+            // --- Update UI ---
+            renderGanttChart(finalSchedule);
+            calculateAndRenderSummary(finalSchedule, startDate, analysisEndDate, avgDailyUsage);
+        }
+
+        function renderGanttChart(ganttTasks) {
+             if (!ganttTasks || ganttTasks.length === 0) {
+                 ganttSvg.innerHTML = '<p>No tasks to display. Calculate the schedule first.</p>';
+                 ganttChartInstance = null;
+                 return;
+             }
+             ganttSvg.innerHTML = ''; // Clear previous chart/message
+
+            // Ensure tasks have valid start/end dates for Frappe Gantt
+            const validGanttTasks = ganttTasks.map(task => ({
+                id: `${task.id}-${task.start}`, // Unique ID for each instance
+                name: `${task.id}: ${task.name}`,
+                start: task.start,
+                end: task.end,
+                progress: task.progress,
+                dependencies: '', // Add dependencies if needed later
+                custom_class: task.custom_class || ''
+            })).filter(task => task.start && task.end && task.start <= task.end);
+
+
+             if (validGanttTasks.length === 0) {
+                 ganttSvg.innerHTML = '<p>No valid tasks with start/end dates found for Gantt chart.</p>';
+                 ganttChartInstance = null;
+                 return;
+             }
+
+            try {
+                 ganttChartInstance = new Gantt("#ganttChart", validGanttTasks, {
+                     header_height: 50,
+                     column_width: 30,
+                     step: 24, // Hours
+                     view_modes: ['Day', 'Week', 'Month', 'Year'], // Available modes
+                     bar_height: 20,
+                     bar_corner_radius: 3,
+                     arrow_curve: 5,
+                     padding: 18,
+                     view_mode: 'Week', // Initial view
+                     date_format: 'YYYY-MM-DD',
+                     language: 'en', // or 'es', 'it', 'ru', 'ptBr', 'fr', 'tr', 'zh', 'de', 'hu'
+                     custom_popup_html: function(task) {
+                         // Custom popup on hover
+                         return `
+                             <div class="details-container" style="padding: 5px; font-size: 12px;">
+                                 <h5>${task.name}</h5>
+                                 <p>Start: ${task.start}</p>
+                                 <p>End: ${task.end}</p>
+                             </div>
+                         `;
+                     },
+                     on_click: function (task) { console.log('Clicked:', task); },
+                     on_date_change: function(task, start, end) { console.log('Date Changed:', task, start, end); },
+                     on_progress_change: function(task, progress) { console.log('Progress Changed:', task, progress); },
+                     on_view_change: function(mode) { console.log('View Changed:', mode); }
+                 });
+                 // Adjust height dynamically (simple example)
+                 const numTasks = new Set(validGanttTasks.map(t => t.name)).size; // Unique task names
+                 const estimatedHeight = Math.max(200, numTasks * 40 + 100); // Base height + per task + header/padding
+                 ganttSvg.style.height = `${estimatedHeight}px`;
+
+            } catch (e) {
+                 console.error("Error creating Gantt chart:", e);
+                 ganttSvg.innerHTML = `<p style="color: red;">Error creating Gantt chart: ${e.message}</p>`;
+                 ganttChartInstance = null;
+            }
+        }
+
+        function calculateAndRenderSummary(schedule, analysisStart, analysisEnd, avgDailyUsage) {
+            summaryTableBody.innerHTML = '';
+            if (!schedule || schedule.length === 0) return;
+
+            const monthlySummary = {}; // { 'YYYY-MM': { totalHours: X, downtime: Y, tasks: [] } }
+
+            let currentDate = new Date(analysisStart);
+            while (currentDate <= analysisEnd) {
+                const year = currentDate.getFullYear();
+                const month = currentDate.getMonth();
+                const monthKey = `${year}-${(month + 1).toString().padStart(2, '0')}`;
+                const daysInMonth = new Date(year, month + 1, 0).getDate();
+                const totalHoursInMonth = daysInMonth * 24; // Or use avgDailyUsage? Let's use 24 for calendar time.
+
+                if (!monthlySummary[monthKey]) {
+                    monthlySummary[monthKey] = {
+                        totalHours: totalHoursInMonth,
+                        downtime: 0,
+                        tasks: []
+                    };
+                }
+
+                // Find tasks starting in this month
+                schedule.forEach(task => {
+                    const taskStartDate = new Date(task.start);
+                    if (taskStartDate.getFullYear() === year && taskStartDate.getMonth() === month) {
+                        const taskDefinition = tasks.find(t => t.id === task.id);
+                        if (taskDefinition) {
+                             monthlySummary[monthKey].downtime += taskDefinition.duration;
+                             monthlySummary[monthKey].tasks.push(`ID ${task.id} (${task.start})`);
+                        }
+                    }
+                });
+
+                // Move to the next month
+                currentDate.setMonth(currentDate.getMonth() + 1);
+                currentDate.setDate(1); // Start of next month
+            }
+
+            // Render summary table
+            Object.keys(monthlySummary).sort().forEach(monthKey => {
+                const summary = monthlySummary[monthKey];
+                const availability = summary.totalHours > 0
+                    ? ((summary.totalHours - summary.downtime) / summary.totalHours * 100)
+                    : 100;
+
+                const row = summaryTableBody.insertRow();
+                row.insertCell().textContent = monthKey;
+                row.insertCell().textContent = summary.totalHours.toFixed(0);
+                row.insertCell().textContent = summary.downtime.toFixed(1);
+                row.insertCell().textContent = availability.toFixed(1) + '%';
+                row.insertCell().textContent = summary.tasks.join(', ');
+            });
+        }
+
+        // --- Event Listeners ---
+        calculateBtn.addEventListener('click', calculateSchedule);
+
+        printSummaryBtn.addEventListener('click', () => {
+            window.print();
+        });
+
+        // Gantt Control Listeners
+        ganttDayBtn.addEventListener('click', () => ganttChartInstance?.change_view_mode('Day'));
+        ganttWeekBtn.addEventListener('click', () => ganttChartInstance?.change_view_mode('Week'));
+        ganttMonthBtn.addEventListener('click', () => ganttChartInstance?.change_view_mode('Month'));
+        ganttYearBtn.addEventListener('click', () => ganttChartInstance?.change_view_mode('Year'));
+
+        // Basic Panning (Scrolls the SVG container - Frappe doesn't have direct pan methods)
+        ganttPanLeftBtn.addEventListener('click', () => {
+            if (ganttSvg.parentElement) ganttSvg.parentElement.scrollBy({ left: -200, behavior: 'smooth' });
+        });
+        ganttPanRightBtn.addEventListener('click', () => {
+             if (ganttSvg.parentElement) ganttSvg.parentElement.scrollBy({ left: 200, behavior: 'smooth' });
+        });
+
+
+        // --- Initialization ---
+        document.addEventListener('DOMContentLoaded', () => {
+            processInitialData(); // Load data, identify suppressions, populate table
+            // Optionally run calculateSchedule on load?
+            // calculateSchedule();
+        });
+
+    </script>
+
+</body>
+</html>
