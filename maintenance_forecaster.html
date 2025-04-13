@@ -23,6 +23,7 @@
         #taskTable input[type="checkbox"] { cursor: pointer; }
         .suppression-list { list-style: none; padding: 0; margin: 0; }
         .suppression-list li { margin-bottom: 3px; }
+        #dataInputArea { width: 98%; height: 150px; margin-top: 5px; font-family: monospace; } /* Style for textarea */
 
         @media print {
             body * { visibility: hidden; }
@@ -30,6 +31,7 @@
             #summaryTab { position: absolute; left: 0; top: 0; width: 100%; }
             button#printSummaryBtn { display: none; } /* Hide print button in print view */
             .tab-container, .input-section, #tasksTab, #ganttTab { display: none; }
+            #dataInputSection { display: none; } /* Hide data input in print view */
         }
     </style>
 </head>
@@ -44,9 +46,17 @@
         <label for="initialAge">Initial Equipment Age (Hours):</label>
         <input type="number" id="initialAge" value="0" min="0">
         <label for="avgDailyUsage">Average Daily Usage (Hours):</label>
-        <input type="number" id="avgDailyUsage" value="16" min="1" max="24">
+        <input type="number" id="avgDailyUsage" value="24" min="1" max="24">
         <button id="calculateBtn">Calculate Schedule</button>
     </div>
+
+    <!-- Data Input Section -->
+    <div id="dataInputSection" class="input-section">
+        <label for="dataInputArea">Maintenance Task Data (Tab Separated: ID, Name, Frequency, Duration, Suppressions):</label><br>
+        <textarea id="dataInputArea"></textarea><br>
+        <button id="loadDataBtn">Load Data from Text</button>
+    </div>
+
 
     <!-- Tabs -->
     <div class="tab-container">
@@ -222,6 +232,8 @@
         const initialAgeInput = document.getElementById('initialAge');
         const avgDailyUsageInput = document.getElementById('avgDailyUsage');
         const calculateBtn = document.getElementById('calculateBtn');
+        const dataInputArea = document.getElementById('dataInputArea'); // New element
+        const loadDataBtn = document.getElementById('loadDataBtn');     // New element
         const taskTableBody = document.getElementById('taskTable').querySelector('tbody');
         const summaryTableBody = document.getElementById('summaryTable').querySelector('tbody');
         const printSummaryBtn = document.getElementById('printSummaryBtn');
@@ -287,8 +299,52 @@
 
         // --- Core Logic Functions (Placeholders - Need Implementation) ---
 
-        function processInitialData() {
-            tasks = initialTasksData.map(task => ({
+        function formatDataForTextarea(data) {
+            // Convert array of objects back to TSV string for the textarea
+            const header = "ID\tMaintenance Items\tFrequency\tDuration\tSuppression Items";
+            const rows = data.map(task =>
+                `${task.id}\t${task.name}\t${task.frequency}\t${task.duration}\t${task.suppressions}`
+            ).join('\n');
+            return header + '\n' + rows;
+        }
+
+        function parseTextData() {
+            const text = dataInputArea.value.trim();
+            const lines = text.split('\n');
+            const parsedData = [];
+            // Skip header line if present
+            const startIndex = lines[0].toLowerCase().startsWith("id\t") ? 1 : 0;
+
+            for (let i = startIndex; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line) continue; // Skip empty lines
+                const parts = line.split('\t'); // Split by tab
+                if (parts.length >= 5) { // Expecting at least 5 columns
+                    const id = parseInt(parts[0], 10);
+                    const name = parts[1];
+                    const frequency = parts[2];
+                    const duration = parseFloat(parts[3]) || 0;
+                    const suppressions = parts[4]; // Keep as string initially
+
+                    if (!isNaN(id) && name && frequency) {
+                        parsedData.push({ id, name, frequency, duration, suppressions });
+                    } else {
+                        console.warn(`Skipping invalid line ${i + 1}: ${line}`);
+                        alert(`Warning: Invalid data format found on line ${i + 1}. Please check the tab-separated format (ID, Name, Frequency, Duration, Suppressions).`);
+                        // Optionally stop processing or just skip
+                    }
+                } else {
+                    console.warn(`Skipping line ${i + 1} due to insufficient columns: ${line}`);
+                     alert(`Warning: Insufficient columns found on line ${i + 1}. Expected 5 tab-separated columns.`);
+                }
+            }
+            console.log("Parsed data from textarea:", parsedData);
+            return parsedData;
+        }
+
+
+        function processInitialData(sourceData) {
+             tasks = sourceData.map(task => ({
                 ...task,
                 duration: parseFloat(task.duration) || 0,
                 frequencyData: parseFrequency(task.frequency),
@@ -698,6 +754,21 @@
             window.print();
         });
 
+        loadDataBtn.addEventListener('click', () => {
+            console.log("Load Data button clicked.");
+            const newData = parseTextData();
+            if (newData.length > 0) {
+                 processInitialData(newData); // Reprocess with data from textarea
+                 // Optionally clear schedule/summary/gantt or require recalculation
+                 summaryTableBody.innerHTML = '<tr><td colspan="5">Data loaded. Please Calculate Schedule.</td></tr>';
+                 ganttSvg.innerHTML = '<p>Data loaded. Please Calculate Schedule.</p>';
+                 ganttChartInstance = null;
+            } else {
+                alert("No valid data found in the text area to load.");
+            }
+        });
+
+
         // Gantt Control Listeners
         ganttDayBtn.addEventListener('click', () => ganttChartInstance?.change_view_mode('Day'));
         ganttWeekBtn.addEventListener('click', () => ganttChartInstance?.change_view_mode('Week'));
@@ -715,7 +786,10 @@
 
         // --- Initialization ---
         document.addEventListener('DOMContentLoaded', () => {
-            processInitialData(); // Load data, identify suppressions, populate table
+            // Populate textarea with default data on initial load
+            dataInputArea.value = formatDataForTextarea(initialTasksData);
+            // Process the default data initially
+            processInitialData(initialTasksData); // Load data, identify suppressions, populate table
             // Optionally run calculateSchedule on load?
             // calculateSchedule();
         });
